@@ -14,7 +14,10 @@ along with Anthropic and Gemini services.
 """
 class OpenAIService:
     def __init__(self, api_key: str):
-        self.client = OpenAI(api_key=api_key)
+        self.client = OpenAI(
+        api_key=api_key,
+        base_url="https://litellm.oit.duke.edu"
+        )   
 
     def handle_message(self, system_prompt: str = "", user_prompt: str = "", response_format: type[BaseModel] = openai_schemas.DefaultLLMOutput):
         """
@@ -22,7 +25,7 @@ class OpenAIService:
         """
         try:
             response = self.client.responses.parse(
-                model="gpt-4o",
+                model="GPT 4.1",
                 input=[
                     {
                         "role": "system", 
@@ -52,7 +55,7 @@ class OpenAIService:
             all_messages.extend(messages)
             
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model="GPT 4.1",
                 messages=all_messages,
                 temperature=0.7,
                 max_tokens=1000
