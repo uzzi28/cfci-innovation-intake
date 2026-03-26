@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.services import openai_service
-from app.api import chat, auth, admin
+from app.api import chat, auth, admin, pdf
 from dotenv import load_dotenv
 import os
 import logging
@@ -67,6 +67,7 @@ app.add_middleware(LoggingMiddleware)
 app.include_router(chat.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
+app.include_router(pdf.router)
 
 # Health check endpoint
 @app.get("/api/health")
