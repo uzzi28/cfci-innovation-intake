@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "server": "cd server && uvicorn app.main:app --reload --port 8000",
+    "server": "cd server && if [ -x .venv/bin/uvicorn ]; then exec .venv/bin/uvicorn app.main:app --reload --port 8000; else exec uvicorn app.main:app --reload --port 8000; fi",
     "server:install": "cd server && pip install -r requirements.txt",
     "dev:full": "concurrently \"npm run server\" \"npm run dev\""
   },

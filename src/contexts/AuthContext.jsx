@@ -46,6 +46,7 @@ export const AuthProvider = ({ children }) => {
     token,
     isLoading,
     isAuthenticated: !!token,
+    isStaff: Boolean(user?.is_staff),
     login,
     logout,
   };

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from app.core.dependencies import db_dependency, user_dependency
 from app.db.models.conversation import Conversation
+from app.db.models.user import User
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -21,18 +22,21 @@ router = APIRouter(
 async def generate_pdf(
     conversation_id: int,
     db = db_dependency,
-    user = user_dependency
+    user: User = user_dependency,
 ):
     conv = db.query(Conversation).get(conversation_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found.")
 
+    if conv.user_id != user.id and not getattr(user, "is_staff", False):
+        raise HTTPException(status_code=403, detail="Not allowed to access this brief.")
+
     # Build field data
     fields = {}
     if conv.form and conv.form.field_submissions:
         for fs in conv.form.field_submissions:
-            field_name = fs.field_template.field_name if fs.field_template else f"Field {fs.field_template_id}"
-            fields[field_name] = fs.value or "Not provided"
+            label = fs.field_template.name if fs.field_template else f"Field {fs.field_template_id}"
+            fields[label] = fs.value or "Not provided"
 
     # Generate PDF in memory
     buffer = io.BytesIO()
@@ -81,7 +85,7 @@ async def generate_pdf(
 
     # Header
     story.append(Paragraph("Product Brief", title_style))
-    story.append(Paragraph("Christensen Family Center for Innovation — Duke Product Lab", subtitle_style))
+    story.append(Paragraph("Duke Engineering Project Intake — CFCI", subtitle_style))
     story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#00247d')))
     story.append(Spacer(1, 16))
 

@@ -38,4 +38,6 @@ def create_tables():
     # Import all models to register them with Base
     from app.db.models import User, Conversation, Message, Form, FormTemplate, FieldTemplate, FieldSubmission
     Base.metadata.create_all(bind=engine)
+    from app.db.migrations_sqlite import run_sqlite_migrations
+    run_sqlite_migrations(engine)
 

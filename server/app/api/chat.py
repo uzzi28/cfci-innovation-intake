@@ -1,9 +1,12 @@
 from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.security import HTTPBearer
 from app.core.dependencies import settings_dependency, openai_service_dependency, db_dependency, user_dependency
-from app.db.models.field_submission import FieldSubmission
+from app.db.models.field_submission import FieldSubmission, FieldStatus
 from app.db.models.message import Message
 from app.db.models.conversation import Conversation
+from app.db.models.form import Form
+from app.db.models.form_template import FormTemplate
+from app.db.models.field_template import FieldTemplate
 from app.schemas.chat_schemas import (
     InitiateChatResponse, AdvanceChatRequest, AdvanceChatResponse,
     SimpleChatRequest, SimpleChatResponse
@@ -21,6 +24,17 @@ router = APIRouter(
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+
+def _fallback_agent_reply(turn_step: int) -> str:
+    prompts = [
+        "Thanks for sharing that. What should we call your project or organization?",
+        "Got it. Who is the primary user or customer for this idea?",
+        "Helpful context. What would success look like in the next few months?",
+        "Understood. Is there a rough timeline or any constraints we should know about?",
+    ]
+    return prompts[turn_step % len(prompts)]
+
 
 # In-memory conversation storage for guest mode
 # In production, this should be Redis or a database
@@ -102,7 +116,14 @@ async def simple_chat(
         
     except Exception as e:
         logger.error(f"Error in simple_chat: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate response")
+        return SimpleChatResponse(
+            conversation_id=conversation_id,
+            message=(
+                "I'm having trouble reaching the AI service right now, but you can keep going—"
+                "tell me a bit more about your idea and who it's for."
+            ),
+            sender="agent",
+        )
 
 
 @router.get("/greeting")
@@ -140,6 +161,41 @@ Family Center for Innovation. How can I assist you today?"""
     except Exception as e:
         logger.error(f"Error creating conversation for user {user.id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to create conversation.")
+
+    try:
+        template = db.query(FormTemplate).order_by(FormTemplate.id.asc()).first()
+        if template:
+            form = Form(user_id=user.id, form_template_id=template.id)
+            db.add(form)
+            db.commit()
+            db.refresh(form)
+            db_conv.form_id = form.id
+            db.add(db_conv)
+            db.commit()
+            db.refresh(db_conv)
+            field_defs = (
+                db.query(FieldTemplate)
+                .filter(
+                    FieldTemplate.form_template_id == template.id,
+                    FieldTemplate.form_id.is_(None),
+                )
+                .order_by(FieldTemplate.sort_order.asc(), FieldTemplate.id.asc())
+                .all()
+            )
+            for ft in field_defs:
+                db.add(
+                    FieldSubmission(
+                        form_id=form.id,
+                        field_template_id=ft.id,
+                        status=FieldStatus.DRAFT,
+                        value=None,
+                    )
+                )
+            db.commit()
+            logger.info("Linked form %s with %s fields to conversation %s", form.id, len(field_defs), db_conv.id)
+    except Exception as e:
+        logger.warning("Could not attach intake form to conversation %s: %s", db_conv.id, e)
+        db.rollback()
 
     try:
         db_message = Message(
@@ -186,6 +242,12 @@ async def advance_chat(
         logger.error(f"Conversation ID {payload.conversation_id} not found or does not belong to user {user.id}.")
         raise HTTPException(status_code=404, detail="Conversation not found.")
 
+    if conv.brief_locked_at is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="This intake brief has been reviewed by staff and is locked. Contact CFCI if you need changes.",
+        )
+
     # Add user's latest message to the db
     try:
         user_message = Message(
@@ -216,9 +278,14 @@ async def advance_chat(
 
             for field_template in field_templates:
                 submission = next((fs for fs in field_submissions if fs.field_template_id == field_template.id), None)
-                form_context += f"Field name: {field_template.field_name}\n"
-                form_context += f"Field data type: {field_template.field_type}\n"
-                form_context += f"Field instructions: {field_template.description}\n"
+                ft_type = (
+                    field_template.field_type.value
+                    if hasattr(field_template.field_type, "value")
+                    else str(field_template.field_type)
+                )
+                form_context += f"Field name: {field_template.name}\n"
+                form_context += f"Field data type: {ft_type}\n"
+                form_context += f"Field instructions: {field_template.description or ''}\n"
                 form_context += f"Current value: {submission.value if submission else 'NONE'}\n"
                 form_context += "--\n"
             logger.info(f"Successfully loaded form context for conversation {conv.id}.")
@@ -251,8 +318,8 @@ async def advance_chat(
         response_text = llm_response["response"].output_text
         logger.info(f"Received response from LLM for conversation {conv.id}.")
     except Exception as e:
-        logger.error(f"Fatal error during LLM call for conversation {conv.id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate agent response via LLM.")
+        logger.warning("LLM call failed for conversation %s, using fallback: %s", conv.id, e)
+        response_text = _fallback_agent_reply(payload.message_step_num)
 
     # Store agent response
     try:

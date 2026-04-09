@@ -27,6 +27,14 @@ class Conversation(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     form_id = Column(Integer, ForeignKey("forms.id"))
 
+    # When staff opens the full brief in admin, submitter can no longer edit via chat.
+    brief_locked_at = Column(DateTime(timezone=True), nullable=True)
+    last_draft_saved_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Staff workflow: draft (in progress), pending (in review), reviewed (done + locked for submitter).
+    # When NULL, API falls back to a completeness-based guess until staff sets explicitly.
+    submission_review_status = Column(String(32), nullable=True)
+
     # ----Relationships----
 
     # One-to-many relationship with Message

@@ -1,5 +1,6 @@
 import React from 'react';
 import './LogoutModal.css';
+import { BRAND } from '../constants/branding';
 
 const LogoutModal = ({ isOpen, onClose, onConfirm, email }) => {
   if (!isOpen) return null;
@@ -9,7 +10,7 @@ const LogoutModal = ({ isOpen, onClose, onConfirm, email }) => {
       <div className="logout-modal" onClick={(e) => e.stopPropagation()}>
         <h2 className="logout-modal-title">Are you sure you want to log out?</h2>
         <p className="logout-modal-text">
-          Log out of CFCI Project Intake Chatbot as <strong>{email}</strong>?
+          Log out of {BRAND.PRODUCT_NAME} as <strong>{email}</strong>?
         </p>
         <div className="logout-modal-buttons">
           <button className="logout-cancel-button" onClick={onClose}>

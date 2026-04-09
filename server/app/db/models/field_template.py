@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Enum
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Enum, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 import enum
@@ -6,12 +6,14 @@ from app.db.database import Base
 
 class FieldType(str, enum.Enum):
     STRING = "string"
+    LONG_TEXT = "long_text"
     INTEGER = "integer"
     BOOLEAN = "boolean"
     DATE = "date"
     EMAIL = "email"
     PHONE = "phone"
     ADDRESS = "address"
+    URL = "url"
 
 class FieldTemplate(Base):
     __tablename__ = "field_templates"
@@ -20,7 +22,8 @@ class FieldTemplate(Base):
     name = Column(String, index=True)
     field_type = Column(Enum(FieldType), index=True)
     description = Column(String, nullable=True)
-    
+    sort_order = Column(Integer, nullable=False, default=0, server_default="0")
+    is_required = Column(Boolean, nullable=False, default=True, server_default="1")
 
     # ----Timestamps----
     created_at = Column(DateTime(timezone=True), server_default=func.now())
