@@ -99,7 +99,7 @@ async def login_user(
             "email": user.email,
             "is_staff": bool(user.is_staff),
         },
-        expires_minutes=120,
+        expires_minutes=43200,
     )
     return {
         "user_id": user.id,

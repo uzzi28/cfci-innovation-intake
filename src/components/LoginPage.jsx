@@ -92,32 +92,6 @@ const LoginPage = () => {
           </div>
         )}
 
-        {!isStaffEntry && (
-          <label className="auth-staff-toggle">
-            <input
-              type="checkbox"
-              checked={openAdminAfterLogin}
-              onChange={(e) => setOpenAdminAfterLogin(e.target.checked)}
-            />
-            <span>
-              I&apos;m <strong>Duke staff</strong> — take me to the <strong>admin</strong> submissions dashboard after
-              sign-in
-            </span>
-          </label>
-        )}
-
-        {import.meta.env.DEV && (
-          <p className="auth-dev-hint">
-            Staff accounts: set <code>STAFF_EMAILS</code> on the API (comma-separated), restart, then sign in.
-            Dev seed user: <strong>tingting.li@duke.edu</strong> / <strong>cfci1234</strong>. Disable seed with{' '}
-            <code>SEED_DEV_USER=false</code>.
-            <br />
-            <Link to="/admin?demo=1" className="auth-dev-hint-link">
-              Preview admin dashboard (mock data, no sign-in)
-            </Link>
-          </p>
-        )}
-
         <form onSubmit={handleSubmit} className="auth-form">
           {error && (
             <div className="auth-error">

@@ -12,7 +12,7 @@ import logging
 
 # Load env from server/ whether you start uvicorn from repo root or from server/
 _SERVER_DIR = Path(__file__).resolve().parent.parent
-for _env_name in (".env.development.local", ".env.local", ".env.development", ".env"):
+for _env_name in (".env.developement.local", ".env.local", ".env.developement", ".env"):
     _env_path = _SERVER_DIR / _env_name
     if _env_path.is_file():
         load_dotenv(_env_path, override=False)

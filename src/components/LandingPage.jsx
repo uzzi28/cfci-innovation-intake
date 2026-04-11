@@ -424,12 +424,14 @@ const LandingPage = () => {
             <Link to="/" className="site-nav-link is-active">
               Intake chat
             </Link>
-            <Link to="/admin" className="site-nav-link site-nav-link-admin" title="Staff dashboard — sign in if prompted">
-              <span className="site-nav-link-text">Staff admin</span>
-              <span className="site-nav-badge" aria-hidden>
-                Admin
-              </span>
-            </Link>
+            {isStaff && (
+              <Link to="/admin" className="site-nav-link site-nav-link-admin" title="Staff dashboard">
+                <span className="site-nav-link-text">Staff admin</span>
+                <span className="site-nav-badge" aria-hidden>
+                  Admin
+                </span>
+              </Link>
+            )}
             {isStaff && (
               <Link to="/admin?tab=template" className="site-nav-link">
                 Brief template
