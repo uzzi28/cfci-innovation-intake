@@ -1,29 +1,35 @@
-from fastapi import APIRouter, HTTPException, Request, Depends
-from fastapi.security import HTTPBearer
-from app.core.dependencies import settings_dependency, openai_service_dependency, db_dependency, user_dependency
-from app.db.models.field_submission import FieldSubmission
+from fastapi import APIRouter, HTTPException, Request
+from app.core.dependencies import openai_service_dependency, db_dependency, user_dependency
+from app.db.models.field_submission import FieldSubmission, FieldStatus
 from app.db.models.message import Message
 from app.db.models.conversation import Conversation
+from app.db.models.form import Form
+from app.db.models.form_template import FormTemplate
+from app.db.models.field_template import FieldTemplate
 from app.schemas.chat_schemas import (
     InitiateChatResponse, AdvanceChatRequest, AdvanceChatResponse,
     SimpleChatRequest, SimpleChatResponse
 )
-from app.schemas.openai_schemas import UpdateFormLLMOutput, DefaultLLMOutput
+from app.schemas.openai_schemas import DefaultLLMOutput
 from app.utils.langgraph_utils import read_markdown_file
 import logging
 import uuid
+import json
 
-# Create router for all chat-related endpoints
-router = APIRouter(
-    prefix="/api/chat", 
-    tags=["chat"]
-)
-
-# Configure logging
+router = APIRouter(prefix="/api/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
 
-# In-memory conversation storage for guest mode
-# In production, this should be Redis or a database
+
+def _fallback_agent_reply(turn_step: int) -> str:
+    prompts = [
+        "Thanks for sharing that. What should we call your project or organization?",
+        "Got it. Who is the primary user or customer for this idea?",
+        "Helpful context. What would success look like in the next few months?",
+        "Understood. Is there a rough timeline or any constraints we should know about?",
+    ]
+    return prompts[turn_step % len(prompts)]
+
+
 guest_conversations: dict[str, list[dict]] = {}
 
 SYSTEM_PROMPT = """You are a friendly and professional AI assistant representing Duke University's Christensen Family Center for Innovation (CFCI). You help potential clients submit project proposals to CFCI's Product Lab.
@@ -55,61 +61,33 @@ Start by warmly greeting the user and asking about their project idea."""
 async def simple_chat(
     payload: SimpleChatRequest,
     request: Request,
-    openai_service = openai_service_dependency
+    openai_service=openai_service_dependency
 ):
-    """
-    Simplified chat endpoint for guest users (no authentication required).
-    Maintains conversation history in memory.
-    """
-    
-    # Generate or use existing conversation ID
     conversation_id = payload.conversation_id or str(uuid.uuid4())
-    
-    # Get or create conversation history
     if conversation_id not in guest_conversations:
         guest_conversations[conversation_id] = []
-    
     conversation_history = guest_conversations[conversation_id]
-    
-    # Add user message to history
-    conversation_history.append({
-        "role": "user",
-        "content": payload.message
-    })
-    
+    conversation_history.append({"role": "user", "content": payload.message})
     try:
-        # Call OpenAI with conversation history
         response = openai_service.simple_chat(
             messages=conversation_history,
             system_prompt=SYSTEM_PROMPT
         )
-        
-        # Add assistant response to history
-        conversation_history.append({
-            "role": "assistant", 
-            "content": response
-        })
-        
-        # Keep only last 20 messages to prevent token overflow
+        conversation_history.append({"role": "assistant", "content": response})
         if len(conversation_history) > 20:
             guest_conversations[conversation_id] = conversation_history[-20:]
-        
-        return SimpleChatResponse(
-            conversation_id=conversation_id,
-            message=response,
-            sender="agent"
-        )
-        
+        return SimpleChatResponse(conversation_id=conversation_id, message=response, sender="agent")
     except Exception as e:
         logger.error(f"Error in simple_chat: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate response")
+        return SimpleChatResponse(
+            conversation_id=conversation_id,
+            message="I'm having trouble reaching the AI service right now, but you can keep going—tell me a bit more about your idea and who it's for.",
+            sender="agent",
+        )
 
 
 @router.get("/greeting")
 async def get_greeting():
-    """
-    Get the initial greeting message for a new conversation.
-    """
     return {
         "message": "Hi! I'm an AI assistant here to help you create a Product Brief for the Christenson Family Center for Innovation. Tell me about your startup or project idea, and I'll help you put together a compelling submission. What are you working on?",
         "sender": "agent"
@@ -118,16 +96,12 @@ async def get_greeting():
 
 @router.post("/initiate")
 async def initiate_chat(
-    db = db_dependency,
-    user = user_dependency
+    db=db_dependency,
+    user=user_dependency
 ):
-    """
-    Endpoint to initiate a new chat session (requires authentication).
-    """
-    
     init_message = """Hi! I'm an AI assistant here to help you with your questions about the Christenson
 Family Center for Innovation. How can I assist you today?"""
-    
+
     try:
         db_conv = Conversation(
             title=f"CFCI x {user.firstname} {user.lastname} Chat",
@@ -142,6 +116,39 @@ Family Center for Innovation. How can I assist you today?"""
         raise HTTPException(status_code=500, detail="Failed to create conversation.")
 
     try:
+        template = db.query(FormTemplate).order_by(FormTemplate.id.asc()).first()
+        if template:
+            form = Form(user_id=user.id, form_template_id=template.id)
+            db.add(form)
+            db.commit()
+            db.refresh(form)
+            db_conv.form_id = form.id
+            db.add(db_conv)
+            db.commit()
+            db.refresh(db_conv)
+            field_defs = (
+                db.query(FieldTemplate)
+                .filter(
+                    FieldTemplate.form_template_id == template.id,
+                    FieldTemplate.form_id.is_(None),
+                )
+                .order_by(FieldTemplate.sort_order.asc(), FieldTemplate.id.asc())
+                .all()
+            )
+            for ft in field_defs:
+                db.add(FieldSubmission(
+                    form_id=form.id,
+                    field_template_id=ft.id,
+                    status=FieldStatus.DRAFT,
+                    value=None,
+                ))
+            db.commit()
+            logger.info("Linked form %s with %s fields to conversation %s", form.id, len(field_defs), db_conv.id)
+    except Exception as e:
+        logger.warning("Could not attach intake form to conversation %s: %s", db_conv.id, e)
+        db.rollback()
+
+    try:
         db_message = Message(
             sender="agent",
             message_num=0,
@@ -152,12 +159,12 @@ Family Center for Innovation. How can I assist you today?"""
         db.add(db_message)
         db.commit()
         db.refresh(db_message)
-        logger.info(f"Initial message added to conversation {db_conv.id} with message num {db_message.message_num} and system ID {db_message.id}.")
+        logger.info(f"Initial message added to conversation {db_conv.id}.")
     except Exception as e:
         logger.error(f"Error creating initial message for conversation {db_conv.id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to create initial message.")
 
-    response = InitiateChatResponse(
+    return InitiateChatResponse(
         conversation_id=db_conv.id,
         message_id=db_message.id,
         message_num=db_message.message_num,
@@ -165,28 +172,26 @@ Family Center for Innovation. How can I assist you today?"""
         content=db_message.content
     )
 
-    return response
-    
 
 @router.post("/advance")
 async def advance_chat(
     payload: AdvanceChatRequest,
     request: Request,
-    db = db_dependency,
-    user = user_dependency,
-    openai_service = openai_service_dependency
+    db=db_dependency,
+    user=user_dependency,
+    openai_service=openai_service_dependency
 ):
-    """
-    Main endpoint used to advance an existing conversation (requires authentication).
-    """
-
-    # Load conv from db
     conv = db.query(Conversation).get(payload.conversation_id)
     if not conv or conv.user_id != user.id:
-        logger.error(f"Conversation ID {payload.conversation_id} not found or does not belong to user {user.id}.")
         raise HTTPException(status_code=404, detail="Conversation not found.")
 
-    # Add user's latest message to the db
+    if conv.brief_locked_at is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="This intake brief has been reviewed by staff and is locked. Contact CFCI if you need changes.",
+        )
+
+    # Add user message
     try:
         user_message = Message(
             sender="user",
@@ -198,27 +203,30 @@ async def advance_chat(
         db.add(user_message)
         db.commit()
         db.refresh(user_message)
-        logger.info(f"User message added to conversation {conv.id} with message num {user_message.message_num} and system ID {user_message.id}.")
+        logger.info(f"User message added to conversation {conv.id}.")
     except Exception as e:
         logger.error(f"Fatal error adding user message to conversation {conv.id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to add user message.")
 
-    # Load form context if form exists
+    # Load form context
     form_context = ""
     if conv.form:
         try:
             form = conv.form
-            form_template = form.form_template  
+            form_template = form.form_template
             field_templates = form_template.field_templates if form_template else []
             field_submissions = [fs for fs in form.field_submissions]
-
             form_context = "### LATEST STATE OF THE FORM\n\n"
-
             for field_template in field_templates:
                 submission = next((fs for fs in field_submissions if fs.field_template_id == field_template.id), None)
-                form_context += f"Field name: {field_template.field_name}\n"
-                form_context += f"Field data type: {field_template.field_type}\n"
-                form_context += f"Field instructions: {field_template.description}\n"
+                ft_type = (
+                    field_template.field_type.value
+                    if hasattr(field_template.field_type, "value")
+                    else str(field_template.field_type)
+                )
+                form_context += f"Field name: {field_template.name}\n"
+                form_context += f"Field data type: {ft_type}\n"
+                form_context += f"Field instructions: {field_template.description or ''}\n"
                 form_context += f"Current value: {submission.value if submission else 'NONE'}\n"
                 form_context += "--\n"
             logger.info(f"Successfully loaded form context for conversation {conv.id}.")
@@ -226,23 +234,22 @@ async def advance_chat(
             logger.warning(f"Could not load form context for conversation {conv.id}: {e}")
             form_context = ""
 
-    # Get recent messages for context
+    # Get recent messages
     recent_messages = db.query(Message).filter(
         Message.conversation_id == conv.id
     ).order_by(Message.message_num.desc()).limit(20).all()
     recent_messages.reverse()
-    
+
     chat_history = ""
     for msg in recent_messages:
         role = "User" if msg.sender == "user" else "Agent"
         chat_history += f"{role}: {msg.content}\n"
 
-    # Generate response using OpenAI
+    # Generate agent response
     try:
         prompt_template = read_markdown_file("app/prompts/generate_response.md")
         full_prompt = prompt_template.replace("{{FORM_CONTEXT}}", form_context)
         full_prompt = full_prompt.replace("{{CHAT_HISTORY}}", chat_history)
-
         logger.info(f"Calling LLM to generate agent response for conversation {conv.id}.")
         llm_response = openai_service.handle_message(
             user_prompt=full_prompt,
@@ -251,8 +258,42 @@ async def advance_chat(
         response_text = llm_response["response"].output_text
         logger.info(f"Received response from LLM for conversation {conv.id}.")
     except Exception as e:
-        logger.error(f"Fatal error during LLM call for conversation {conv.id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate agent response via LLM.")
+        logger.warning("LLM call failed for conversation %s, using fallback: %s", conv.id, e)
+        response_text = _fallback_agent_reply(payload.message_step_num)
+
+    # Extract field values from conversation and update FieldSubmission
+    if conv.form:
+        try:
+            extract_prompt = f"""You are extracting structured data from a conversation.
+
+Based on the conversation history below, extract values for each form field.
+Only extract values that were clearly stated by the user. If unsure, return null.
+Return ONLY a JSON object with field names as keys and extracted values as strings (or null).
+
+FIELDS TO EXTRACT:
+{form_context}
+
+CONVERSATION:
+{chat_history}
+
+Return JSON only, no explanation."""
+
+            extraction = openai_service.simple_chat(
+                messages=[{"role": "user", "content": extract_prompt}],
+                system_prompt="You are a structured data extractor. Return only valid JSON."
+            )
+            clean = extraction.strip().replace("```json", "").replace("```", "").strip()
+            extracted = json.loads(clean)
+            field_submissions = conv.form.field_submissions
+            for fs in field_submissions:
+                field_name = fs.field_template.name if fs.field_template else None
+                if field_name and field_name in extracted and extracted[field_name]:
+                    fs.value = str(extracted[field_name])
+                    fs.status = FieldStatus.DRAFT
+            db.commit()
+            logger.info("Extracted and saved field values for conversation %s", conv.id)
+        except Exception as e:
+            logger.warning("Field extraction failed for conversation %s: %s", conv.id, e)
 
     # Store agent response
     try:
@@ -266,11 +307,15 @@ async def advance_chat(
         db.add(agent_message)
         db.commit()
         db.refresh(agent_message)
-        logger.info(f"Agent message added to conversation {conv.id} with message num {agent_message.message_num}.")
+        # Sync to Airtable
+        from app.services.airtable_service import sync_to_airtable
+        field_data = {fs.field_template.name: fs.value for fs in conv.form.field_submissions if fs.value}
+        sync_to_airtable(conv, field_data)
+        logger.info(f"Agent message added to conversation {conv.id}.")
     except Exception as e:
         logger.error(f"Fatal error adding agent message to conversation {conv.id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to add agent message.")
-    
+
     return AdvanceChatResponse(
         message_id=agent_message.id,
         message_num=agent_message.message_num,

@@ -13,7 +13,8 @@ python-jose==3.5.0
 bcrypt==5.0.0
 passlib==1.7.4
 
-# Pydantic and validation
+# Pydantic and validation (typing-extensions 4.12+ required for pydantic_core / Sentinel)
+typing-extensions>=4.12.2
 pydantic==2.12.3
 pydantic-settings==2.11.0
 email-validator==2.3.0

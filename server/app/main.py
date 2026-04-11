@@ -1,11 +1,21 @@
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.services import openai_service
-from app.api import chat, auth, admin, pdf
+from app.api import chat, auth, admin, pdf, form_admin, conversations_user
+from app.seed import run_startup_seed
 from dotenv import load_dotenv
 import os
 import logging
+
+# Load env from server/ whether you start uvicorn from repo root or from server/
+_SERVER_DIR = Path(__file__).resolve().parent.parent
+for _env_name in (".env.developement.local", ".env.local", ".env.developement", ".env"):
+    _env_path = _SERVER_DIR / _env_name
+    if _env_path.is_file():
+        load_dotenv(_env_path, override=False)
 
 # Configure logging
 logging.basicConfig(
@@ -14,13 +24,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Load env variables
-load_dotenv(dotenv_path=".env.development.local")
-
 # Add middleware for formatting request logs
 class LoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        body = await request.body()
+        # Do not call request.body() here — it consumes the stream and breaks JSON POST bodies (e.g. login).
         print(f"--- Incoming Request ---")
         print(f"URL: {request.url}")
         print(f"Method: {request.method}")
@@ -33,7 +40,9 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI):
     # Startup actions
     logger.info("Starting up the FastAPI application.")
-    
+
+    run_startup_seed()
+
     # Initialize services
     app.state.openai_client = openai_service.OpenAIService(api_key=os.getenv("OPENAI_KEY"))
     yield
@@ -67,6 +76,8 @@ app.add_middleware(LoggingMiddleware)
 app.include_router(chat.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
+app.include_router(form_admin.router)
+app.include_router(conversations_user.router)
 app.include_router(pdf.router)
 
 # Health check endpoint

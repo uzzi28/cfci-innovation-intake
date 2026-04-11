@@ -3,8 +3,23 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { authAPI } from '../services/api';
 import './AuthPages.css';
+import { BRAND } from '../constants/branding';
 
 const cfciLogo = '/cfci-logo.jpg';
+
+function friendlyRegisterError(err) {
+  const msg = err?.message || '';
+  if (/\b500\b/i.test(msg) || /internal server error/i.test(msg)) {
+    return 'We could not create your account because of a temporary server problem. Please try again shortly, or use “Continue as guest” from the home page while the team fixes the API.';
+  }
+  if (/status:\s*502|502\b|503\b|504\b/i.test(msg)) {
+    return 'The server is unavailable right now. Try again in a few minutes.';
+  }
+  if (/fetch|network|failed to fetch/i.test(msg)) {
+    return 'We could not reach the server. Check your connection and that the API is running.';
+  }
+  return msg || 'Registration failed. Please try again.';
+}
 
 const RegisterPage = () => {
   const [formData, setFormData] = useState({
@@ -58,18 +73,19 @@ const RegisterPage = () => {
       const loginResponse = await authAPI.login(formData.email, formData.password);
       
       login(
-        { 
-          id: loginResponse.user_id, 
+        {
+          id: loginResponse.user_id,
           email: formData.email,
           firstname: formData.firstname,
-          lastname: formData.lastname
+          lastname: formData.lastname,
+          is_staff: Boolean(loginResponse.is_staff),
         },
         loginResponse.access_token
       );
       
       navigate('/');
     } catch (err) {
-      setError(err.message || 'Registration failed. Please try again.');
+      setError(friendlyRegisterError(err));
     } finally {
       setIsLoading(false);
     }
@@ -79,13 +95,13 @@ const RegisterPage = () => {
     <div className="auth-page">
       <div className="auth-header">
         <Link to="/">
-          <img src={cfciLogo} alt="CFCI Logo" className="auth-logo" />
+          <img src={cfciLogo} alt={BRAND.LOGO_ALT} className="auth-logo" />
         </Link>
       </div>
 
       <div className="auth-content">
         <h1 className="auth-title">Create your account</h1>
-        <p className="auth-subtitle">Join CFCI Project Intake Chatbot to get started</p>
+        <p className="auth-subtitle">Join {BRAND.PRODUCT_NAME} to get started</p>
 
         <form onSubmit={handleSubmit} className="auth-form">
           {error && (

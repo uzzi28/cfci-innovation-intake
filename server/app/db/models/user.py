@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from app.db.database import Base
 
@@ -10,6 +10,7 @@ class User(Base):
     firstname = Column(String, nullable=False)
     lastname = Column(String, nullable=False)
     hashed_password = Column(String, nullable=False)
+    is_staff = Column(Boolean, nullable=False, default=False, server_default="0")
 
     # One-to-many relationship with Conversation, Form, and Message models
     conversations = relationship("Conversation", back_populates="owner")

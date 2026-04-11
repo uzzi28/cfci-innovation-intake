@@ -1,10 +1,21 @@
 /**
- * API Service for CFCI Innovation Intake
- * Handles all communication with the FastAPI backend
+ * API service for Duke Engineering Project Intake (FastAPI backend).
  */
 
 // Use empty string to leverage Vite's proxy, or fallback to localhost for direct API calls
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+
+function formatErrorDetail(response, errorData) {
+  const detail = errorData?.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => (typeof item?.msg === 'string' ? item.msg : JSON.stringify(item)))
+      .join(' ');
+  }
+  if (detail && typeof detail === 'object') return JSON.stringify(detail);
+  return `Request failed (${response.status})`;
+}
 
 /**
  * Generic fetch wrapper with error handling
@@ -32,7 +43,7 @@ async function fetchAPI(endpoint, options = {}) {
     
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+      throw new Error(formatErrorDetail(response, errorData));
     }
     
     return await response.json();
@@ -140,9 +151,130 @@ export const healthAPI = {
   },
 };
 
+/**
+ * Staff admin API (requires Bearer token; backend may evolve role checks)
+ */
+export const adminAPI = {
+  listSubmissions: async (token) => {
+    return fetchAPI('/api/admin/submissions', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  },
+
+  getSubmission: async (token, conversationId) => {
+    return fetchAPI(`/api/admin/submissions/${conversationId}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  },
+
+  lockBrief: async (token, conversationId, lock = true) => {
+    return fetchAPI(`/api/admin/submissions/${conversationId}/lock-brief`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ lock }),
+    });
+  },
+
+  /** draft | pending | reviewed (reviewed locks submitter brief) */
+  updateSubmissionStatus: async (token, conversationId, submissionStatus) => {
+    return fetchAPI(`/api/admin/submissions/${conversationId}/status`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ submission_status: submissionStatus }),
+    });
+  },
+};
+
+export const intakeFormAPI = {
+  getTemplate: async (token) => {
+    return fetchAPI('/api/admin/intake-form', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  },
+  updateTitle: async (token, intakeTitle) => {
+    return fetchAPI('/api/admin/intake-form/settings/title', {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ intake_title: intakeTitle }),
+    });
+  },
+  createField: async (token, body) => {
+    return fetchAPI('/api/admin/intake-form/fields', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
+  },
+  patchField: async (token, fieldId, body) => {
+    return fetchAPI(`/api/admin/intake-form/fields/${fieldId}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
+  },
+  deleteField: async (token, fieldId) => {
+    return fetchAPI(`/api/admin/intake-form/fields/${fieldId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  },
+  reorderFields: async (token, orderedIds) => {
+    return fetchAPI('/api/admin/intake-form/fields/reorder', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ ordered_ids: orderedIds }),
+    });
+  },
+};
+
+export const conversationAPI = {
+  saveDraft: async (token, conversationId) => {
+    return fetchAPI(`/api/conversations/${conversationId}/save-draft`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  },
+  emailBriefStub: async (token, conversationId, note = '') => {
+    return fetchAPI(`/api/conversations/${conversationId}/email-brief`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ note }),
+    });
+  },
+  getStatus: async (token, conversationId) => {
+    return fetchAPI(`/api/conversations/${conversationId}/status`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  },
+};
+
+export async function downloadBriefPdf(token, conversationId) {
+  const url = `${API_BASE_URL}/api/pdf/submissions/${conversationId}`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `PDF failed (${response.status})`);
+  }
+  return response.blob();
+}
+
 export default {
   chat: chatAPI,
   auth: authAPI,
   health: healthAPI,
+  admin: adminAPI,
+  intakeForm: intakeFormAPI,
+  conversation: conversationAPI,
 };
 

@@ -1,4 +1,4 @@
-from fastapi import Depends, Request, Header, HTTPException
+from fastapi import Depends, Request, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import get_settings
 from jose import JWTError
@@ -60,6 +60,15 @@ def get_current_user(
     return user
 
 user_dependency = Depends(get_current_user)
+
+
+def get_current_staff_user(user: User = Depends(get_current_user)):
+    if not getattr(user, "is_staff", False):
+        raise HTTPException(status_code=403, detail="Staff access required.")
+    return user
+
+
+staff_user_dependency = Depends(get_current_staff_user)
 
 openai_service_dependency = Depends(get_openai_service)
 
